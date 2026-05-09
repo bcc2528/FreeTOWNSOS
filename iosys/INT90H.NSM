@@ -147,9 +147,11 @@ INT41H_DATA_IS_SECOND_BYTE:
 						MOV		CH,1
 						SHL		CH,CL
 
+						CMP		AH,0F0H
+						JAE		IS_KEY_PRESS	; Repeat. See Red Book pp.234
 						TEST	AH,010H
 						JNE		INT41H_DATA_IS_KEY_RELEASE
-; IS_KEY_PRESS:
+IS_KEY_PRESS:
 						OR		CS:[KEY_MATRIX+BX],CH
 
 						; Do not push a key that does not make a chr if encode mode.
@@ -410,7 +412,8 @@ INT90H_07H_CHECK_INPUT:
 						AND		AX,KEYBUF_LEN_MASK
 						MOV		[BP+SAVED_EAX],AL
 
-						MOV		BYTE [BP+SAVED_EDX+1],0FFH	; Tentatively no input
+						MOV		WORD [BP+SAVED_EDX],0FFFFH	; Tentatively no input
+						MOV		WORD [BP+SAVED_EBX],0FF00h	; Tentatively no input
 						CALL	PEEK_KEYBUF
 						JC		INT90H_EXIT
 
@@ -435,13 +438,24 @@ INT90H_09H_READ_BLOCKING:
 						JMP		INT90H_09H_HAVE_KEY
 
 INT90H_09H_READ_NONBLOCKING:
+						MOV		WORD [BP+SAVED_EDX],0FFFFH	; Tentatively no input
+						MOV		WORD [BP+SAVED_EBX],0FF00h	; Tentatively no input
 						CALL	READ_KEYBUF
-						MOV		BYTE [BP+SAVED_EDX+1],0FFH	; Tentatively no input
 						JC		INT90H_EXIT
 
 INT90H_09H_HAVE_KEY:
 						; AL is key-address (b7 is always 0)
 						; AH b0 Right Thumb Shift   b1 Left Thumb Shift  b2 SHIFT  b3 CTRL  b4 0 Make or 1 Break  b5,b6 Keyboard Type
+
+						CMP		AH,0F0H	; If all b4-b7 are all on, it means typamatic (key repeat), in which case, b4 should be dropped.
+						JB		INT90H_09H_NOT_TYPAMATIC
+
+						; Is typamatic.  Drop b4.
+						; Air Raider is relying on key repeat, and b7 of return-DL (will be taken from b4 of AH here) matters.
+						AND		AH,0EFH
+
+INT90H_09H_NOT_TYPAMATIC:
+
 						MOV		SI,CS:[BIOS_CODE_SYSTEM]
 						AND		SI,BIOS_CODESYS_MODE_MASK
 

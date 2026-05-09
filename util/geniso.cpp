@@ -94,6 +94,8 @@ public:
 	std::vector <Dir> allDirList;		// allDirList[0] is always the root directory.
 	std::unordered_map <std::string,size_t> nameToDirIdx;   // "ABC/XYZ" -> index
 	std::vector <unsigned char> IPLSector;
+	bool IOSYSLBAat0020H=false;
+	unsigned int IOSYSLBA=0;
 
 	// Steps:
 	//   (1) Add files.
@@ -132,7 +134,44 @@ public:
 	template <class T>
 	static bool Compare(const std::pair<std::string,T> &a,const std::pair<std::string,T> &b)
 	{
-		return a.first<b.first;
+		return Make8plus3(a.first)<Make8plus3(b.first);
+	}
+	static std::string Make8plus3(std::string src)
+	{
+		if("."==src || ".."==src)
+		{
+			return src;
+		}
+
+		std::string DOS;
+		int state=0;
+		for(auto c : src)
+		{
+			if(0==state)
+			{
+				if('.'==c)
+				{
+					while(DOS.size()<8)
+					{
+						DOS.push_back(' ');
+					}
+					state=1;
+				}
+				else
+				{
+					DOS.push_back(c);
+				}
+			}
+			else
+			{
+				DOS.push_back(c);
+			}
+		}
+		while(DOS.size()<11)
+		{
+			DOS.push_back(' ');
+		}
+		return DOS;
 	}
 	void SortFiles(void);
 	void MakeDirectoryList(void);
@@ -143,6 +182,8 @@ public:
 	void CalculatePathTableLBA(void);
 
 	void CalculateDirFileLBA(void);
+
+	void RecordIOSYSLocationInIPL(void);
 
 
 	// (4)
@@ -456,12 +497,27 @@ void ISOImage::CalculateDirFileLBA(void)
 	}
 	for(auto &f : allFileList)
 	{
+		if(0==f.dirIndex && "IO.SYS"==f.nameInISO)
+		{
+			std::cout << "IO.SYS at LBA " << LBA << "\n";
+			IOSYSLBA=LBA;
+		}
 		f.LBA=LBA;
 		auto nSectors=(f.len+CD_SECTOR_SIZE-1)/CD_SECTOR_SIZE;
 		LBA+=nSectors;
 	}
 
 	totalSectorCount=LBA;
+}
+
+void ISOImage::RecordIOSYSLocationInIPL(void)
+{
+	if(0x24<=IPLSector.size())
+	{
+		IPLSector[0x20]=IOSYSLBA&0xFF;
+		IPLSector[0x21]=(IOSYSLBA>>8)&0xFF;
+		IPLSector[0x22]=(IOSYSLBA>>16)&0xFF;
+	}
 }
 
 std::vector <unsigned char> ISOImage::MakeDescriptorTable(void) const
@@ -1001,6 +1057,8 @@ void CommandParameterInfo::PrintHelp(void)
 	std::cout << "Specify system label.\n";
 	std::cout << "-IPL ipl_sector\n";
 	std::cout << "Specify IPL-sector binary.\n";
+	std::cout << "-FBIOSLBA\n";
+	std::cout << "Write IO.SYS LBA at offset 0020H of the IPL.\n";
 	std::cout << "-VERBOSE\n";
 	std::cout << "Verbose mode.\n";
 	std::cout << "-O filename.ISO\n";
@@ -1064,6 +1122,10 @@ bool CommandParameterInfo::RecognizeCommandParameter(ISOImage &iso,std::vector <
 				return false;
 			}
 			++i;
+		}
+		else if("-FBIOSLBA"==opt)
+		{
+			iso.IOSYSLBAat0020H=true;
 		}
 		else if("-VERBOSE"==opt)
 		{
@@ -1149,6 +1211,10 @@ int main(int ac,char *av[])
 	iso.MakeDirectoryList();
 	iso.CalculatePathTableLBA();
 	iso.CalculateDirFileLBA();
+	if(true==iso.IOSYSLBAat0020H)
+	{
+		iso.RecordIOSYSLocationInIPL();
+	}
 
 	if(true==cpi.verbose)
 	{

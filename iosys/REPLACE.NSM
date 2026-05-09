@@ -1,0 +1,348 @@
+; RUN386 to FREE386 File Redirector by CaptainYS (http://www.ysflight.com)
+
+; Intercept INT 21H AH=4BH and redirect RUN386 to FREE386
+
+; Usage:
+;   DEVICE=REPLACE.SYS /P:RUN386.EXE /A:D:\FREE386.COM
+;     /P Source pattern
+;     /A Alternative
+;   Both patterns are mandatory.
+;   Alternative can be written like:
+;     /A:@:\FREE386.COM
+;   then REPLACE.SYS will interpret '@' as the current working drive at the time of installation. i.e., the boot drive.
+
+						CPU		386
+						BITS	16
+
+						%INCLUDE "UTIL.NSM"
+						%INCLUDE "DEF.NSM"
+						%INCLUDE "TOWNSDEF.NSM"
+
+
+						DD      0FFFFFFFFh                  ; SYSDEV_NEXT
+						DW      SYSDEV_DEVFLAG_IS_CHARDEV   ; SYSDEV_DEVFLAGS
+STRATEGY_PTR			DW      STRATEGY16                  ; SYSDEV_STRATEGY
+INTERRUPT_PTR			DW      INTERRUPT16                 ; SYSDEV_INTERRUPT
+DRIVER_NAME				DB      "********"
+
+INT21H_CS_IP			DD		0
+
+REQ_HEADER				DD		0
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+						BITS	16
+INT21H_INTERCEPT:
+						CMP		AH,4BH		; Load or Exec
+						JE		DO_INTERCEPT
+						CMP		AH,3DH		; FOPEN
+						JE		DO_INTERCEPT
+						CMP		AH,41H		; DELETE
+						JE		DO_INTERCEPT
+						CMP		AH,4EH		; FIND_FIRST
+						JNE		NO_REDIRECT
+
+DO_INTERCEPT:
+						PUSH	ES
+						PUSHA
+
+
+						PUSH	CS
+						POP		ES
+						CLD
+
+						; CF=0 Source pattern found.
+						; CF=1 Source pattern not found.
+						CALL	FIND_MATCHING_PATTERN
+						JC		FALL_BACK
+
+
+						POPA
+						POP		ES
+						PUSH	ES
+						PUSHA
+
+
+						PUSH	DS
+
+						MOV		DX,ALTERNATIVE
+						PUSH	CS
+						POP		DS
+
+						PUSHF	; To allow INT 21H handler to return by IRET.
+						CALL	FAR [CS:INT21H_CS_IP]
+
+						POP		DS
+
+						MOV		[CS:SAVE_AX],AX
+						POPA
+						POP		ES
+						MOV		AX,[CS:SAVE_AX]
+						JC		YES_ERR
+
+NO_ERR:
+						XCHG	SP,BP
+						AND		BYTE [BP+4],0FEh
+						XCHG	SP,BP
+						IRET
+
+YES_ERR:
+						XCHG	SP,BP
+						OR		BYTE [BP+4],1
+						XCHG	SP,BP
+						IRET
+
+
+FALL_BACK:				POPA
+						POP		ES
+NO_REDIRECT:
+						JMP		FAR [CS:INT21H_CS_IP]
+
+SAVE_AX					DW		0
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+CAPITALIZE:				CMP		AL,'a'
+						JB		CAPITALIZE_RET
+						CMP		AL,'z'
+						JA		CAPITALIZE_RET
+						SUB		AL,020h
+CAPITALIZE_RET:			RET
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+FIND_MATCHING_PATTERN:	PUSH	DX
+						PUSH	BX
+
+						MOV		SI,DX
+
+FILENAME_LOOP:			CALL	MATCH_PATTERN
+						JE		FOUND_MATCHING_PATTERN
+
+						LODSB
+						AND		AL,AL
+						JNE		FILENAME_LOOP
+
+; NOT_FOUND
+						STC
+						POP		BX
+						POP		DX
+						RET
+
+FOUND_MATCHING_PATTERN:
+						CLC
+						POP		BX
+						POP		DX
+						RET
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+; Some programs use FIND_FIRST with RUN386.??? to find an executable, when no extension was given.
+; This driver must be able to take that input and replace with R:\FREE386.COM
+
+; Match DS:SI and ES:SOURCE_PTN
+MATCH_PATTERN:			PUSH	DI
+						PUSH	SI
+
+						MOV		DI,SOURCEPTN
+
+MATCH_LOOP:				LODSB
+
+						CMP		AL,'?'	; 
+						JNE		MATCH_NOT_WILDCARD
+; MATCH_WILDCARD:
+						INC		DI
+						JMP		MATCH_LOOP_NEXT
+
+MATCH_NOT_WILDCARD:
+						CALL	CAPITALIZE
+						SCASB
+						JNE		MATCH_NOT
+
+MATCH_LOOP_NEXT:
+						CMP		BYTE [ES:DI],0		; Matched all the way.
+						JNE		MATCH_LOOP
+
+; MATCH_DID_MATCH:
+						CMP		AL,AL	; ZF=1
+						POP		SI
+						POP		DI
+						RET
+
+MATCH_NOT:
+						OR		AL,0FFh	; ZF=0
+						POP		SI
+						POP		DI
+						RET
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+SOURCEPTN				TIMES	64	DB 0
+SOURCEPTN_END:
+
+; If specified by the command parameter.
+ALTERNATIVE				TIMES	64	DB 0
+ALTERNATIVE_END:
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+END_OF_DRIVER:
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+STRATEGY16:
+						MOV		CS:[REQ_HEADER],BX
+						MOV		CS:[REQ_HEADER+2],ES
+						RETF
+
+INTERRUPT16:
+						SAVE_WORLD
+
+						LES		BX,CS:[REQ_HEADER]
+
+						MOV		WORD ES:[BX+REQ_STATUS],DEVREQ_STATUS_ERROR
+
+						MOV		AL,ES:[BX+REQ_COMMAND]
+						CMP		AL,DEVREQ_CMD_INIT
+						JNE		INTERRUPT_EXIT
+
+						CALL	INIT_DRIVER
+
+INTERRUPT_EXIT:
+						RESTORE_WORLD
+						RETF
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+INIT_DRIVER:
+						LDS		SI,ES:[BX+REQ_INIT_CMDLINE]
+INIT_OPTION_LOOP:
+						LODSB
+						CMP		AL,'/'
+						JE		INIT_OPTION_SLASH
+						CMP		AL,' '
+						JE		INIT_OPTION_LOOP
+						CMP		AL,TAB
+						JE		INIT_OPTION_LOOP
+						CMP		AL,CR
+						JE		INIT_OPTION_END
+						CMP		AL,LF
+						JE		INIT_OPTION_END
+						CMP		AL,0
+						JE		INIT_OPTION_END
+
+						MOV		DX,INIT_MSG_ERROR_IN_PARAM
+
+; Input DX=Message
+INIT_ERROR:
+						MOV		WORD ES:[BX+REQ_INIT_END_OF_RESIDENT_CODE_RETURN],0
+						MOV		ES:[BX+REQ_INIT_END_OF_RESIDENT_CODE_RETURN+2],CS
+
+						MOV		WORD ES:[BX+REQ_STATUS],DEVREQ_STATUS_ERROR
+						PUSH	CS
+						POP		DS
+						MOV		AH,9
+						INT		21H
+						RET
+
+
+INIT_OPTION_SLASH:
+						LODSB
+						CALL	CAPITALIZE
+
+						MOV		DI,SOURCEPTN
+						MOV		CX,SOURCEPTN_END-1
+						CMP		AL,'P'
+						JE		INIT_OPTION_COPY_TO_DI
+
+						MOV		DI,ALTERNATIVE
+						MOV		CX,ALTERNATIVE_END-1
+						CMP		AL,'A'
+						JE		INIT_OPTION_COPY_TO_DI
+
+						MOV		DX,INIT_MSG_ERROR_UNDEFINED_OPTION
+						JMP		INIT_ERROR
+
+
+INIT_OPTION_COPY_TO_DI:
+						CMP		DI,CX
+						MOV		DX,INIT_MSG_ERROR_TOO_LONG
+						JAE		INIT_ERROR
+
+						LODSB
+						CMP		AL,':'
+						MOV		DX,INIT_MSG_ERROR_MISSING_COLON
+						JNE		INIT_ERROR
+
+INIT_OPTION_COPY_LOOP:
+						MOV		AL,[DS:SI]
+						CMP		AL,0
+						JE		INIT_OPTION_COPY_END
+						CMP		AL,CR
+						JE		INIT_OPTION_COPY_END
+						CMP		AL,LF
+						JE		INIT_OPTION_COPY_END
+						CMP		AL,' '
+						JE		INIT_OPTION_COPY_END
+
+						CALL	CAPITALIZE
+						MOV		[CS:DI],AL
+						INC		SI
+						INC		DI
+						JMP		INIT_OPTION_COPY_LOOP
+
+INIT_OPTION_COPY_END:
+						MOV		BYTE [CS:DI],0
+						JMP		INIT_OPTION_LOOP
+
+INIT_OPTION_END:
+
+
+						MOV		DX,INIT_MSG_ERROR_EMPTY_SOURCE_PTN
+						CMP		BYTE [CS:SOURCEPTN],0
+						JE		INIT_ERROR
+
+						MOV		DX,INIT_MSG_ERROR_EMPTY_ALT
+						CMP		BYTE [CS:ALTERNATIVE],0
+						JE		INIT_ERROR
+
+
+						; If alternative starts with '@:' replace with the current working drive.
+						CMP		WORD [CS:ALTERNATIVE],03A40h
+						JNE		ALT_NOT_CURRENT_DRIVE
+
+						MOV		AH,19H
+						INT		21H
+						ADD		AL,'A'
+						MOV		[CS:ALTERNATIVE],AL
+ALT_NOT_CURRENT_DRIVE:
+
+
+						MOV		WORD ES:[BX+REQ_STATUS],DEVREQ_STATUS_NOERROR
+
+						XOR		AX,AX
+						MOV		DS,AX
+
+						MOV		EAX,[4*021H]
+						MOV		CS:[INT21H_CS_IP],EAX
+
+						MOV		AX,CS
+						SHL		EAX,16
+						MOV		AX,INT21H_INTERCEPT
+						MOV		[4*021H],EAX
+
+						MOV		WORD ES:[BX+REQ_INIT_END_OF_RESIDENT_CODE_RETURN],END_OF_DRIVER
+						MOV		ES:[BX+REQ_INIT_END_OF_RESIDENT_CODE_RETURN+2],CS
+
+						RET
+
+INIT_MSG_ERROR_IN_PARAM			DB	"Error in the command option.$",0
+INIT_MSG_ERROR_UNDEFINED_OPTION	DB	"Error: Undefined option.$",0
+INIT_MSG_ERROR_MISSING_COLON	DB	"Error: Missing colon after the option.$",0
+INIT_MSG_ERROR_TOO_LONG			DB	"Error: Option too long.$",0
+INIT_MSG_ERROR_EMPTY_SOURCE_PTN	DB	"Error: Source pattern is not specified.$",0
+INIT_MSG_ERROR_EMPTY_ALT		DB	"Error: Alternative file is not specified.$",0
+
+END_OF_MINVCPI:			DB		"FM-series forever! (Excluding FM-V.  I don't care FM-V.)",0

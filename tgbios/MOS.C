@@ -13,7 +13,7 @@
 
 #define MOS_ACTIVEFLAG_BIOS_STARTED 1
 #define MOS_ACTIVEFLAG_HANDLING_INT 2
-#define MOS_ACTIVEFLAG_DRAWING 3
+#define MOS_ACTIVEFLAG_DRAWING 4
 
 struct MOS_Status
 {
@@ -35,6 +35,10 @@ struct MOS_Status
 	unsigned char PSETPtn[MAX_CURSOR_WIDTH*MAX_CURSOR_HEIGHT*2]; // Can be a color cursor
 	unsigned char ANDPtn[MAX_CURSOR_WIDTH*MAX_CURSOR_HEIGHT/8];
 	unsigned char VRAMBackup[MAX_CURSOR_HEIGHT*MAX_CURSOR_WIDTH*2];
+
+	int buttonDownCount[2],buttonUpCount[2];
+	unsigned int buttonDownState[2],buttonUpState[2];
+	struct POINTW buttonDownPos[2],buttonUpPos[2];
 };
 
 static _Far struct MOS_Status *MOS_GetStatus(void);
@@ -86,9 +90,13 @@ void MOS_SaveVRAM(_Far struct MOS_Status *mos,_Far struct EGB_Work *egb)
 		_Far struct EGB_ScreenMode *scrnMode=EGB_GetScreenModeProp(screenMode);
 		_Far unsigned char *vram=EGB_GetVRAMPointer(egb,mos->dispPage&1);
 		struct EGB_BlockInfo blkInfo;
+		struct POINTW dispPos=mos->dispPos;
+		dispPos.x-=mos->cursorOrigin.x;
+		dispPos.y-=mos->cursorOrigin.y;
+
 		blkInfo.data=mos->VRAMBackup;
-		blkInfo.p0=mos->dispPos;
-		blkInfo.p1=mos->dispPos;
+		blkInfo.p0=dispPos;
+		blkInfo.p1=dispPos;
 		blkInfo.p1.x+=mos->cursorSize.x-1;
 		blkInfo.p1.y+=mos->cursorSize.y-1;
 
@@ -109,11 +117,14 @@ void MOS_DrawCursor(_Far struct MOS_Status *mos,_Far struct EGB_Work *egb)
 	{
 		_Far struct EGB_ScreenMode *scrnMode=EGB_GetScreenModeProp(screenMode);
 		_Far unsigned char *vram=EGB_GetVRAMPointer(egb,mos->dispPage&1);
-
 		struct EGB_BlockInfo blkInfo;
+		struct POINTW dispPos=mos->dispPos;
+		dispPos.x-=mos->cursorOrigin.x;
+		dispPos.y-=mos->cursorOrigin.y;
+
 		blkInfo.data=mos->ANDPtn;
-		blkInfo.p0=mos->dispPos;
-		blkInfo.p1=mos->dispPos;
+		blkInfo.p0=dispPos;
+		blkInfo.p1=dispPos;
 		blkInfo.p1.x+=mos->cursorSize.x-1;
 		blkInfo.p1.y+=mos->cursorSize.y-1;
 
@@ -157,9 +168,13 @@ void MOS_RestoreVRAM(_Far struct MOS_Status *mos,_Far struct EGB_Work *egb)
 		_Far struct EGB_ScreenMode *scrnMode=EGB_GetScreenModeProp(screenMode);
 		_Far unsigned char *vram=EGB_GetVRAMPointer(egb,mos->dispPage&1);
 		struct EGB_BlockInfo blkInfo;
+		struct POINTW dispPos=mos->dispPos;
+		dispPos.x-=mos->cursorOrigin.x;
+		dispPos.y-=mos->cursorOrigin.y;
+
 		blkInfo.data=mos->VRAMBackup;
-		blkInfo.p0=mos->dispPos;
-		blkInfo.p1=mos->dispPos;
+		blkInfo.p0=dispPos;
+		blkInfo.p1=dispPos;
 		blkInfo.p1.x+=mos->cursorSize.x-1;
 		blkInfo.p1.y+=mos->cursorSize.y-1;
 
@@ -359,6 +374,19 @@ void MOS_00H_START(
 
 	stat->color=0x7FFF;
 
+	stat->buttonDownCount[0]=0;
+	stat->buttonDownCount[1]=0;
+	stat->buttonUpCount[0]=0;
+	stat->buttonUpCount[1]=0;
+	stat->buttonDownPos[0].x=0;
+	stat->buttonDownPos[0].y=0;
+	stat->buttonDownPos[1].x=0;
+	stat->buttonDownPos[1].y=0;
+	stat->buttonUpPos[0].x=0;
+	stat->buttonUpPos[0].y=0;
+	stat->buttonUpPos[1].x=0;
+	stat->buttonUpPos[1].y=0;
+
 	_Far unsigned char *ptnSrc;
 	_FP_SEG(ptnSrc)=SEG_TGBIOS_CODE;
 	_FP_OFF(ptnSrc)=(unsigned int)defCursorPtn;
@@ -457,6 +485,8 @@ void MOS_02H_DISP(
 		}
 	}
 	_POPFD
+
+	SET_SECOND_BYTE(&EAX,0);
 }
 
 void MOS_03H_RDPOS(
@@ -547,7 +577,17 @@ void MOS_05H_RDON(
 	unsigned int GS,
 	unsigned int FS)
 {
-	TSUGARU_BREAK
+	_Far struct MOS_Status *stat=MOS_GetStatus();
+	EAX&=1;
+
+	SET_LOW_BYTE(&ECX,stat->buttonDownCount[EAX]);
+	SET_SECOND_BYTE(&ECX,stat->buttonDownState[EAX]);
+	SET_LOW_WORD(&EDX,stat->buttonDownPos[EAX].x);
+	SET_LOW_WORD(&EBX,stat->buttonDownPos[EAX].y);
+
+	stat->buttonDownCount[EAX]=0;
+
+	SET_SECOND_BYTE(&EAX,0);
 }
 
 void MOS_06H_RDOFF(
@@ -564,7 +604,17 @@ void MOS_06H_RDOFF(
 	unsigned int GS,
 	unsigned int FS)
 {
-	TSUGARU_BREAK
+	_Far struct MOS_Status *stat=MOS_GetStatus();
+	EAX&=1;
+
+	SET_LOW_BYTE(&ECX,stat->buttonUpCount[EAX]);
+	SET_SECOND_BYTE(&ECX,stat->buttonUpState[EAX]);
+	SET_LOW_WORD(&EDX,stat->buttonUpPos[EAX].x);
+	SET_LOW_WORD(&EBX,stat->buttonUpPos[EAX].y);
+
+	stat->buttonUpCount[EAX]=0;
+
+	SET_SECOND_BYTE(&EAX,0);
 }
 
 void MOS_07H_HORIZON(
@@ -850,7 +900,7 @@ void MOS_0AH_MOTION(
 	unsigned int GS,
 	unsigned int FS)
 {
-	TSUGARU_BREAK
+	TSUGARU_BREAK(__LINE__);
 }
 
 void MOS_0BH_ENTSUB(
@@ -871,7 +921,7 @@ void MOS_0BH_ENTSUB(
 	// VIPS2 calls this function with DX=0, means no condition for mouse event call-back.
 	if(0!=DX)
 	{
-		TSUGARU_BREAK
+		TSUGARU_BREAK(__LINE__);
 	}
 	SET_SECOND_BYTE(&EAX,0);
 }
@@ -940,6 +990,7 @@ void MOS_0EH_WRITEPAGE(
 	_Far struct MOS_Status *stat=MOS_GetStatus();
 	_Far struct EGB_Work *egb=EGB_GetWork();
 	unsigned char AL=EAX&1;
+	unsigned char prevScrnModeID=stat->screenMode[stat->dispPage&1];
 
 	_PUSHFD
 	if(0!=stat->showLevel)
@@ -950,15 +1001,18 @@ void MOS_0EH_WRITEPAGE(
 	stat->dispPage=AL;
 
 	unsigned char scrnModeID=stat->screenMode[stat->dispPage&1];
-	_Far struct EGB_ScreenMode *scrnMode=EGB_GetScreenModeProp(scrnModeID);
-	stat->minPos.x=0;
-	stat->minPos.y=0;
-	stat->maxPos=scrnMode->visiSize;
-	stat->maxPos.x--;
-	stat->maxPos.y--;
-	stat->pos=scrnMode->visiSize;
-	stat->pos.x>>=1;
-	stat->pos.y>>=1;
+	if(prevScrnModeID!=scrnModeID)
+	{
+		_Far struct EGB_ScreenMode *scrnMode=EGB_GetScreenModeProp(scrnModeID);
+		stat->minPos.x=0;
+		stat->minPos.y=0;
+		stat->maxPos=scrnMode->visiSize;
+		stat->maxPos.x--;
+		stat->maxPos.y--;
+		stat->pos=scrnMode->visiSize;
+		stat->pos.x>>=1;
+		stat->pos.y>>=1;
+	}
 
 	if(0!=stat->showLevel)
 	{
@@ -1033,7 +1087,7 @@ void MOS_10H_TILEPATTERN(
 	unsigned int GS,
 	unsigned int FS)
 {
-	TSUGARU_BREAK
+	TSUGARU_BREAK(__LINE__);
 }
 
 void MOS_11H_VIEWHORIZON(
@@ -1050,7 +1104,7 @@ void MOS_11H_VIEWHORIZON(
 	unsigned int GS,
 	unsigned int FS)
 {
-	TSUGARU_BREAK
+	TSUGARU_BREAK(__LINE__);
 }
 
 void MOS_12H_VIEWVERTICAL(
@@ -1067,7 +1121,7 @@ void MOS_12H_VIEWVERTICAL(
 	unsigned int GS,
 	unsigned int FS)
 {
-	TSUGARU_BREAK
+	TSUGARU_BREAK(__LINE__);
 }
 
 void MOS_13H_BTNXCHG(
@@ -1103,7 +1157,7 @@ void MOS_14H_ACCELERATION(
 	unsigned int GS,
 	unsigned int FS)
 {
-	TSUGARU_BREAK
+	TSUGARU_BREAK(__LINE__);
 }
 
 void MOS_INTERVAL(void)
@@ -1125,7 +1179,28 @@ void MOS_INTERVAL(void)
 	dy=(dxdybtn>>8)&255;
 
 	_CLI
-	stat->btn=(dxdybtn>>16)&255;
+	unsigned int btn=(dxdybtn>>16)&255;
+	if(btn!=stat->btn)
+	{
+		int b;
+		for(b=0; b<2; ++b)
+		{
+			unsigned bit=(1<<b);
+			if(0==(stat->btn&bit) && 0!=(btn&bit)) // button down
+			{
+				++stat->buttonDownCount[b];
+				stat->buttonDownState[b]=btn;
+				stat->buttonDownPos[b]=stat->pos;
+			}
+			if(0!=(stat->btn&bit) && 0==(btn&bit)) // button up
+			{
+				++stat->buttonUpCount[b];
+				stat->buttonUpState[b]=btn;
+				stat->buttonUpPos[b]=stat->pos;
+			}
+		}
+		stat->btn=btn;
+	}
 	_STI
 
 	// High-C doesn't sign-extend if I copy char to short.  WTF?

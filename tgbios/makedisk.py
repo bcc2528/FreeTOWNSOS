@@ -10,11 +10,6 @@ THISDIR=os.path.dirname(THISFILE)
 def CopyToResources(filename):
 	shutil.copyfile(filename,os.path.join("..","resources",filename))
 
-def PrintOutput():
-	fp=open(os.path.join(THISDIR,"OUTPUT.TXT"),"r")
-	for line in fp:
-		print(line)
-	fp.close()
 
 def IsTestFile(fn):
 	return fn=="EGB_PAI.BIN" or fn=="EGB_PUT.BIN" or fn.endswith(".EXP") or fn.endswith(".SND") or fn.endswith(".FMB") or fn.endswith(".PMB") or fn.endswith(".SND")
@@ -39,48 +34,60 @@ def Run(argv):
 		print("Error bulding IO.SYS")
 		quit()
 
-
 	proc=subprocess.Popen([
-		"Tsugaru_CUI",
+		"Tsugaru_Headless",
 		os.path.join(THISDIR,"..","CompROM"),
 		"-FD0",
-		os.path.join(THISDIR,"..","make_build_env","BUILDTGBIOS.bin"),
+		os.path.join(THISDIR,"..","buildenv","RUNNERFD.bin"),
 		"-BOOTKEY",
 		"F0",
-		"-SHAREDDIR",
+		"-TGDRV",
 		os.path.join(THISDIR,"..","..","HC386ENV"),
-		"-SHAREDDIR",
+		"-TGDRV",
 		THISDIR,
-		"-DEBUG",
+		"-FREQ","100",
+		# "-DEBUG",
 		"-UNITTEST",
 		"-DONTUSEFPU",	# Let High-C use no-fpu mode.
+		"-VMFLAG", "CONSOUT", # Automatic in Tsugaru_Headless.  Needed if Tsugaru_CUI is used.
+		"-conscmd","D:\AUTOEXEC.BAT",
+		"-conscmd","E:",
+		"-conscmd","SET PATH=A:\;%PATH%", # Just in case
+		"-conscmd","TASK.BAT",
 	])
 	proc.communicate()
 	if 0!=proc.returncode:
 		print("Error bulding TGBIOS.BIN")
-		PrintOutput()
 		quit()
+
+
+
+	proc=subprocess.Popen([
+		"python",
+		os.path.join(THISDIR,"..","tgutil","makedisk.py")])
+	proc.communicate()
+	if 0!=proc.returncode:
+		print("Error bulding Tsugaru-BIOS Utilities")
+		quit()
+
 
 
 	proc1=subprocess.Popen(["cl","../util/makefd.cpp","../util/dosdisk.cpp","/EHsc"])
 	proc1.communicate()
 	if 0!=proc1.returncode:
 		print("Error bulding makefd.exe")
-		PrintOutput()
 		quit()
 
 	proc2=subprocess.Popen(["cl","../util/makehd.cpp","../util/dosdisk.cpp","/EHsc"])
 	proc2.communicate()
 	if 0!=proc2.returncode:
 		print("Error building makehd.exe")
-		PrintOutput()
 		quit()
 
 	proc3=subprocess.Popen(["cl","../util/geniso.cpp","/EHsc"])
 	proc3.communicate()
 	if 0!=proc3.returncode:
 		print("Error building geniso.exe")
-		PrintOutput()
 		quit()
 
 	proc=subprocess.Popen(["./makefd",
@@ -97,6 +104,7 @@ def Run(argv):
 		"-i",		"../resources/TEST.EXP",
 		"-i",		"../resources/MINVCPI.SYS",
 		"-i",		"../resources/FAKENSDD.SYS",
+		"-i",		"../resources/REPLACE.SYS",
 		"-i",		"../resources/SYSXXXX0.COM",
 		"-i",		"../externals/ORICON/ORICON.COM",
 		"-i",		"../externals/Free386/free386.com",
@@ -106,7 +114,6 @@ def Run(argv):
 	proc.communicate()
 	if 0!=proc.returncode:
 		print("Error building FDIMG.bin")
-		PrintOutput()
 		quit()
 
 	proc=subprocess.Popen(["./makefd",
@@ -122,6 +129,7 @@ def Run(argv):
 		"-i",		"../resources/MINVCPI.SYS",
 		"-i",		"../resources/FAKENSDD.SYS",	# Needed for running VIPS2 (and probably programs developed using High-C Multimedia Kit)
 		"-i",		"../resources/SYSXXXX0.COM",	# Needed for running VIPS2 (and probably programs developed using High-C Multimedia Kit)
+		"-i",		"../resources/REPLACE.SYS",
 		"-i",		"../externals/ORICON/ORICON.COM",
 		"-i",		"../externals/Free386/free386.com",
 		"-i",		"TGBIOS.SYS",
@@ -130,7 +138,6 @@ def Run(argv):
 	proc.communicate()
 	if 0!=proc.returncode:
 		print("Error building FDIMG_USEROM.bin")
-		PrintOutput()
 		quit()
 
 	proc=subprocess.Popen(["./makefd",
@@ -147,6 +154,7 @@ def Run(argv):
 		"-i",		"../resources/MINVCPI.SYS",
 		"-i",		"../resources/FAKENSDD.SYS",
 		"-i",		"../resources/SYSXXXX0.COM",
+		"-i",		"../resources/REPLACE.SYS",
 		"-i",		"../externals/ORICON/ORICON.COM",
 		"-i",		"../externals/Free386/free386.com",
 		"-i",		"TGBIOS.SYS",
@@ -155,7 +163,6 @@ def Run(argv):
 	proc.communicate()
 	if 0!=proc.returncode:
 		print("Error building TESTFD.bin")
-		PrintOutput()
 		quit()
 
 
@@ -169,21 +176,22 @@ def Run(argv):
 		"-i",		"../resources/RUNNERFD/CONFIG.SYS",
 		"-i",		"../resources/RUNNERFD/AUTOEXEC.BAT",
 		"-i",		"../resources/TGDRV.COM",
+		# "-i",		"../resources/TGCONS.SYS",  # No Longer Used
 		"-i",		"../resources/FORCE31K.COM",
 		"-i",		"../resources/MINVCPI.SYS",
 		"-i",		"../resources/FAKENSDD.SYS",
 		"-i",		"../resources/SYSXXXX0.COM",
+		"-i",		"../resources/REPLACE.SYS",
 		"-i",		"../resources/SUCCESS.EXE",
 		"-i",		"../resources/FAIL.EXE",
-		"-i",		"../externals/ORICON/ORICON.COM",
+		# "-i",		"../externals/ORICON/ORICON.COM", # Not used in the RUNNERFD
 		"-i",		"../externals/Free386/free386.com",
 		"-i",		"TGBIOS.SYS",
 		"-i",		"TGBIOS.BIN",
 	])
 	proc.communicate()
 	if 0!=proc.returncode:
-		print("Error building FDIMG.bin")
-		PrintOutput()
+		print("Error building RUNNERFD.bin")
 		quit()
 
 
@@ -203,6 +211,7 @@ def Run(argv):
 		"-i",		"0",	"../resources/MINVCPI.SYS",
 		"-i",		"0",	"../resources/FAKENSDD.SYS",
 		"-i",		"0",	"../resources/SYSXXXX0.COM",
+		"-i",		"0",	"../resources/REPLACE.SYS",
 		"-i",		"0",	"../externals/ORICON/ORICON.COM",
 		"-i",		"0",	"../externals/Free386/free386.com",
 		"-i",		"0",	"TGBIOS.SYS",
@@ -211,7 +220,6 @@ def Run(argv):
 	proc.communicate()
 	if 0!=proc.returncode:
 		print("Error building HDIMG.h0")
-		PrintOutput()
 		quit()
 
 
@@ -233,6 +241,7 @@ def Run(argv):
 		"-VOL",		"TSUGARU_OS",	# Volume Label
 		"-SYS",		"TSUGARU_OS",	# System Label
 		"-IPL",		"../iosys/CD_IPL.bin",
+		"-FBIOSLBA",
 		"-F",		"../resources/IO.SYS",
 		"-F",		"../resources/YSDOS.SYS",
 		"-F",		"../resources/YAMAND.COM",
@@ -243,6 +252,7 @@ def Run(argv):
 		"-F",		"../resources/MINVCPI.SYS",
 		"-F",		"../resources/FAKENSDD.SYS",
 		"-F",		"../resources/SYSXXXX0.COM",
+		"-F",		"../resources/REPLACE.SYS",
 		"-F",		"../resources/RAMDRIVE.SYS",
 		"-F",		"../externals/ORICON/ORICON.COM",
 		"-F",		"../externals/Free386/free386.com",
@@ -253,7 +263,6 @@ def Run(argv):
 	proc.communicate()
 	if 0!=proc.returncode:
 		print("Error building CDIMG.ISO")
-		PrintOutput()
 		quit()
 
 	CopyToResources("TGBIOS.SYS")
@@ -264,7 +273,7 @@ def Run(argv):
 	CopyToResources("HDIMG.h0")
 	CopyToResources("CDIMG.ISO")
 
-	PrintOutput()
+	print("Build. successful.")
 
 
 

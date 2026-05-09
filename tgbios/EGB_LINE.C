@@ -6,6 +6,35 @@
 #include "IODEF.H"
 #include "UTIL.H"
 
+#define EGB_Line_4bit_Horizontal_LogicOp(op) \
+{ \
+	if(xMin&1) \
+	{ \
+		ptrSet->vram[vramAddr] op (color&0xF0); \
+		++vramAddr; \
+		++xMin; \
+	} \
+	{ \
+		int i; \
+		unsigned int count=(xMax+1-xMin)/2; \
+		unsigned int countDiv4=(count>>2),countMod4=(count&3); \
+		for(i=0; i<countDiv4; ++i) \
+		{ \
+			*((_Far unsigned int *)(ptrSet->vram+vramAddr)) op color; \
+			vramAddr+=4; \
+		} \
+		for(i=0; i<countMod4; ++i) \
+		{ \
+			*(ptrSet->vram+vramAddr) op color; \
+			++vramAddr; \
+		} \
+	} \
+	if(!(xMax&1)) \
+	{ \
+		ptrSet->vram[vramAddr] op (color&0x0F); \
+	} \
+}
+
 void EGB_DrawLine(_Far struct EGB_Work *work,struct EGB_PagePointerSet *ptrSet,struct POINTW p0,struct POINTW p1)
 {
 	int dx=p1.x-p0.x;
@@ -15,7 +44,7 @@ void EGB_DrawLine(_Far struct EGB_Work *work,struct EGB_PagePointerSet *ptrSet,s
 
 	if(~0!=work->lineStipple)
 	{
-		TSUGARU_BREAK;
+		TSUGARU_BREAK(__LINE__);
 		_PUSH_DS	// Just to make it distinctive
 		_POP_DS
 	}
@@ -77,22 +106,22 @@ void EGB_DrawLine(_Far struct EGB_Work *work,struct EGB_PagePointerSet *ptrSet,s
 			vramAddr=((yMin*ptrSet->mode->bytesPerLine+p0.x)*ptrSet->mode->bitsPerPixel)>>3;
 		}
 
+		color=work->color[EGB_FOREGROUND_COLOR];
+		if(EGB_FUNC_PRESET==work->drawingMode)
+		{
+			color=work->color[EGB_BACKGROUND_COLOR];
+		}
 		if(4==ptrSet->mode->bitsPerPixel)
 		{
 			if(p0.x&1)
 			{
 				andPtn=0x0F;
-				color=work->color[EGB_FOREGROUND_COLOR]<<4;
+				color<<=4;
 			}
 			else
 			{
 				andPtn=0xF0;
-				color=work->color[EGB_FOREGROUND_COLOR];
 			}
-		}
-		else
-		{
-			color=work->color[EGB_FOREGROUND_COLOR];
 		}
 
 		switch(ptrSet->mode->bitsPerPixel)
@@ -100,6 +129,7 @@ void EGB_DrawLine(_Far struct EGB_Work *work,struct EGB_PagePointerSet *ptrSet,s
 		case 4:
 			switch(work->drawingMode)
 			{
+			case EGB_FUNC_PRESET:
 			case EGB_FUNC_PSET:
 			case EGB_FUNC_OPAQUE:
 			case EGB_FUNC_MATTE:
@@ -111,17 +141,35 @@ void EGB_DrawLine(_Far struct EGB_Work *work,struct EGB_PagePointerSet *ptrSet,s
 				}
 				break;
 			case EGB_FUNC_XOR:
-				ptrSet->vram[vramAddr]^=color;
-				vramAddr+=ptrSet->mode->bytesPerLine;
+				for(y=yMin; y<=yMax; ++y)
+				{
+					ptrSet->vram[vramAddr]^=color;
+					vramAddr+=ptrSet->mode->bytesPerLine;
+				}
+				break;
+			case EGB_FUNC_AND:
+				for(y=yMin; y<=yMax; ++y)
+				{
+					ptrSet->vram[vramAddr]&=color;
+					vramAddr+=ptrSet->mode->bytesPerLine;
+				}
+				break;
+			case EGB_FUNC_OR:
+				for(y=yMin; y<=yMax; ++y)
+				{
+					ptrSet->vram[vramAddr]|=color;
+					vramAddr+=ptrSet->mode->bytesPerLine;
+				}
 				break;
 			default:
-				TSUGARU_BREAK;
+				TSUGARU_BREAK(__LINE__);
 				break;
 			}
 			break;
 		case 8:
 			switch(work->drawingMode)
 			{
+			case EGB_FUNC_PRESET:
 			case EGB_FUNC_PSET:
 			case EGB_FUNC_OPAQUE:
 			case EGB_FUNC_MATTE:
@@ -138,14 +186,29 @@ void EGB_DrawLine(_Far struct EGB_Work *work,struct EGB_PagePointerSet *ptrSet,s
 					vramAddr+=ptrSet->mode->bytesPerLine;
 				}
 				break;
+			case EGB_FUNC_AND:
+				for(y=yMin; y<=yMax; ++y)
+				{
+					ptrSet->vram[vramAddr]&=color;
+					vramAddr+=ptrSet->mode->bytesPerLine;
+				}
+				break;
+			case EGB_FUNC_OR:
+				for(y=yMin; y<=yMax; ++y)
+				{
+					ptrSet->vram[vramAddr]|=color;
+					vramAddr+=ptrSet->mode->bytesPerLine;
+				}
+				break;
 			default:
-				TSUGARU_BREAK;
+				TSUGARU_BREAK(__LINE__);
 				break;
 			}
 			break;
 		case 16:
 			switch(work->drawingMode)
 			{
+			case EGB_FUNC_PRESET:
 			case EGB_FUNC_PSET:
 			case EGB_FUNC_OPAQUE:
 			case EGB_FUNC_MATTE:
@@ -156,12 +219,12 @@ void EGB_DrawLine(_Far struct EGB_Work *work,struct EGB_PagePointerSet *ptrSet,s
 				}
 				break;
 			default:
-				TSUGARU_BREAK;
+				TSUGARU_BREAK(__LINE__);
 				break;
 			}
 			break;
 		default:
-			TSUGARU_BREAK;
+			TSUGARU_BREAK(__LINE__);
 			break;
 		}
 		return;
@@ -183,11 +246,16 @@ void EGB_DrawLine(_Far struct EGB_Work *work,struct EGB_PagePointerSet *ptrSet,s
 		EGB_CalcVRAMAddr(&vramAddr,xMin,p0.y,ptrSet->mode);
 
 		color=GetExpandedColor(work->color[EGB_FOREGROUND_COLOR],ptrSet->mode->bitsPerPixel);
+		if(EGB_FUNC_PRESET==work->drawingMode)
+		{
+			color=GetExpandedColor(work->color[EGB_BACKGROUND_COLOR],ptrSet->mode->bitsPerPixel);
+		}
 		switch(ptrSet->mode->bitsPerPixel)
 		{
 		case 4:
 			switch(work->drawingMode)
 			{
+			case EGB_FUNC_PRESET:
 			case EGB_FUNC_PSET:
 			case EGB_FUNC_OPAQUE:
 			case EGB_FUNC_MATTE:
@@ -210,40 +278,23 @@ void EGB_DrawLine(_Far struct EGB_Work *work,struct EGB_PagePointerSet *ptrSet,s
 				}
 				break;
 			case EGB_FUNC_XOR:
-				if(xMin&1)
-				{
-					ptrSet->vram[vramAddr]^=(color&0xF0);
-					++vramAddr;
-					++xMin;
-				}
-				{
-					int i;
-					unsigned int count=(xMax+1-xMin)/2;
-					unsigned int countDiv4=(count>>2),countMod4=(count&3);
-					for(i=0; i<countDiv4; ++i)
-					{
-						*((_Far unsigned int *)(ptrSet->vram+vramAddr))^=color;
-						vramAddr+=4;
-					}
-					for(i=0; i<countMod4; ++i)
-					{
-						*(ptrSet->vram+vramAddr)^=color;
-						++vramAddr;
-					}
-				}
-				if(!(xMax&1))
-				{
-					ptrSet->vram[vramAddr]^=(color&0x0F);
-				}
+				EGB_Line_4bit_Horizontal_LogicOp(^=);
+				break;
+			case EGB_FUNC_AND:
+				EGB_Line_4bit_Horizontal_LogicOp(&=);
+				break;
+			case EGB_FUNC_OR:
+				EGB_Line_4bit_Horizontal_LogicOp(|=);
 				break;
 			default:
-				TSUGARU_BREAK;
+				TSUGARU_BREAK(__LINE__);
 				break;
 			}
 			break;
 		case 8:
 			switch(work->drawingMode)
 			{
+			case EGB_FUNC_PRESET:
 			case EGB_FUNC_PSET:
 			case EGB_FUNC_OPAQUE:
 			case EGB_FUNC_MATTE:
@@ -262,20 +313,21 @@ void EGB_DrawLine(_Far struct EGB_Work *work,struct EGB_PagePointerSet *ptrSet,s
 				}
 				break;
 			default:
-				TSUGARU_BREAK;
+				TSUGARU_BREAK(__LINE__);
 				break;
 			}
 			break;
 		case 16:
 			switch(work->drawingMode)
 			{
+			case EGB_FUNC_PRESET:
 			case EGB_FUNC_PSET:
 			case EGB_FUNC_OPAQUE:
 			case EGB_FUNC_MATTE:
 				MEMSETW_FAR(ptrSet->vram+vramAddr,color,xMax-xMin+1);
 				break;
 			default:
-				TSUGARU_BREAK;
+				TSUGARU_BREAK(__LINE__);
 				break;
 			}
 			break;
@@ -312,16 +364,21 @@ void EGB_DrawLine(_Far struct EGB_Work *work,struct EGB_PagePointerSet *ptrSet,s
 
 	if(hei<wid)
 	{
+		unsigned short color;
 		int balance=wid/2;
 		short x=p0.x,y=p0.y;
 		unsigned int vramAddr;
 		_Far unsigned char *VRAM=ptrSet->vram;
 		EGB_CalcVRAMAddr(&vramAddr,x,y,ptrSet->mode);
 
+		color=(EGB_FUNC_PRESET!=work->drawingMode ? 
+		       work->color[EGB_FOREGROUND_COLOR] : 
+		       work->color[EGB_BACKGROUND_COLOR]);
+
 		switch(ptrSet->mode->bitsPerPixel)
 		{
 		case 1:
-			TSUGARU_BREAK;
+			TSUGARU_BREAK(__LINE__);
 			break;
 		case 4:
 			{
@@ -330,18 +387,19 @@ void EGB_DrawLine(_Far struct EGB_Work *work,struct EGB_PagePointerSet *ptrSet,s
 				if(0==(x&1))
 				{
 					ANDPtn=0xF0;
-					ORPtn=(work->color[EGB_FOREGROUND_COLOR]&0x0F);
+					ORPtn=color&0x0F;
 				}
 				else
 				{
 					ANDPtn=0x0F;
-					ORPtn=(work->color[EGB_FOREGROUND_COLOR]&0x0F)<<4;
+					ORPtn=color<<4;
 				}
 
 				for(;;)
 				{
 					switch(work->drawingMode)
 					{
+					case EGB_FUNC_PRESET:
 					case EGB_FUNC_PSET:
 					case EGB_FUNC_OPAQUE:
 					case EGB_FUNC_MATTE:
@@ -351,8 +409,14 @@ void EGB_DrawLine(_Far struct EGB_Work *work,struct EGB_PagePointerSet *ptrSet,s
 					case EGB_FUNC_XOR:
 						VRAM[vramAddr]^=ORPtn;
 						break;
+					case EGB_FUNC_AND:
+						VRAM[vramAddr]&=ORPtn;
+						break;
+					case EGB_FUNC_OR:
+						VRAM[vramAddr]|=ORPtn;
+						break;
 					default:
-						TSUGARU_BREAK;
+						TSUGARU_BREAK(__LINE__);
 						break;
 					}
 
@@ -385,12 +449,13 @@ void EGB_DrawLine(_Far struct EGB_Work *work,struct EGB_PagePointerSet *ptrSet,s
 			break;
 		case 8:
 			{
-				unsigned char col=work->color[EGB_FOREGROUND_COLOR];
+				unsigned char col=color;
 
 				for(;;)
 				{
 					switch(work->drawingMode)
 					{
+					case EGB_FUNC_PRESET:
 					case EGB_FUNC_PSET:
 					case EGB_FUNC_OPAQUE:
 					case EGB_FUNC_MATTE:
@@ -399,8 +464,14 @@ void EGB_DrawLine(_Far struct EGB_Work *work,struct EGB_PagePointerSet *ptrSet,s
 					case EGB_FUNC_XOR:
 						VRAM[vramAddr]^=col;
 						break;
+					case EGB_FUNC_AND:
+						VRAM[vramAddr]&=col;
+						break;
+					case EGB_FUNC_OR:
+						VRAM[vramAddr]|=col;
+						break;
 					default:
-						TSUGARU_BREAK;
+						TSUGARU_BREAK(__LINE__);
 						break;
 					}
 
@@ -423,19 +494,29 @@ void EGB_DrawLine(_Far struct EGB_Work *work,struct EGB_PagePointerSet *ptrSet,s
 			break;
 		case 16:
 			{
-				unsigned short col=work->color[EGB_FOREGROUND_COLOR];
+				unsigned short col=color;
 
 				for(;;)
 				{
 					switch(work->drawingMode)
 					{
+					case EGB_FUNC_PRESET:
 					case EGB_FUNC_PSET:
 					case EGB_FUNC_OPAQUE:
 					case EGB_FUNC_MATTE:
 						*((_Far unsigned short *)(VRAM+vramAddr))=col;
 						break;
+					case EGB_FUNC_XOR:
+						*((_Far unsigned short *)(VRAM+vramAddr))^=col;
+						break;
+					case EGB_FUNC_AND:
+						*((_Far unsigned short *)(VRAM+vramAddr))&=col;
+						break;
+					case EGB_FUNC_OR:
+						*((_Far unsigned short *)(VRAM+vramAddr))|=col;
+						break;
 					default:
-						TSUGARU_BREAK;
+						TSUGARU_BREAK(__LINE__);
 						break;
 					}
 
@@ -460,16 +541,21 @@ void EGB_DrawLine(_Far struct EGB_Work *work,struct EGB_PagePointerSet *ptrSet,s
 	}
 	else // if(wid<hei)
 	{
+		unsigned short color;
 		int balance=hei/2;
 		short x=p0.x,y=p0.y;
 		unsigned int vramAddr;
 		_Far unsigned char *VRAM=ptrSet->vram;
 		EGB_CalcVRAMAddr(&vramAddr,x,y,ptrSet->mode);
 
+		color=(EGB_FUNC_PRESET!=work->drawingMode ? 
+		       work->color[EGB_FOREGROUND_COLOR] : 
+		       work->color[EGB_BACKGROUND_COLOR]);
+
 		switch(ptrSet->mode->bitsPerPixel)
 		{
 		case 1:
-			TSUGARU_BREAK;
+			TSUGARU_BREAK(__LINE__);
 			break;
 		case 4:
 			{
@@ -478,12 +564,12 @@ void EGB_DrawLine(_Far struct EGB_Work *work,struct EGB_PagePointerSet *ptrSet,s
 				if(0==(x&1))
 				{
 					ANDPtn=0xF0;
-					ORPtn=(work->color[EGB_FOREGROUND_COLOR]&0x0F);
+					ORPtn=(color&0x0F);
 				}
 				else
 				{
 					ANDPtn=0x0F;
-					ORPtn=(work->color[EGB_FOREGROUND_COLOR]&0x0F)<<4;
+					ORPtn=color<<4;
 				}
 
 				for(;;)
@@ -493,11 +579,21 @@ void EGB_DrawLine(_Far struct EGB_Work *work,struct EGB_PagePointerSet *ptrSet,s
 					case EGB_FUNC_PSET:
 					case EGB_FUNC_OPAQUE:
 					case EGB_FUNC_MATTE:
+					case EGB_FUNC_PRESET:
 						VRAM[vramAddr]&=ANDPtn;
 						VRAM[vramAddr]|=ORPtn;
 						break;
+					case EGB_FUNC_XOR:
+						VRAM[vramAddr]^=ORPtn;
+						break;
+					case EGB_FUNC_AND:
+						VRAM[vramAddr]&=ORPtn;
+						break;
+					case EGB_FUNC_OR:
+						VRAM[vramAddr]|=ORPtn;
+						break;
 					default:
-						TSUGARU_BREAK;
+						TSUGARU_BREAK(__LINE__);
 						break;
 					}
 
@@ -530,22 +626,27 @@ void EGB_DrawLine(_Far struct EGB_Work *work,struct EGB_PagePointerSet *ptrSet,s
 			break;
 		case 8:
 			{
-				unsigned char col=work->color[EGB_FOREGROUND_COLOR];
-
 				for(;;)
 				{
 					switch(work->drawingMode)
 					{
+					case EGB_FUNC_PRESET:
 					case EGB_FUNC_PSET:
 					case EGB_FUNC_OPAQUE:
 					case EGB_FUNC_MATTE:
-						VRAM[vramAddr]=col;
+						VRAM[vramAddr]=color;
 						break;
 					case EGB_FUNC_XOR:
-						VRAM[vramAddr]^=col;
+						VRAM[vramAddr]^=color;
+						break;
+					case EGB_FUNC_AND:
+						VRAM[vramAddr]&=color;
+						break;
+					case EGB_FUNC_OR:
+						VRAM[vramAddr]|=color;
 						break;
 					default:
-						TSUGARU_BREAK;
+						TSUGARU_BREAK(__LINE__);
 						break;
 					}
 
@@ -568,19 +669,18 @@ void EGB_DrawLine(_Far struct EGB_Work *work,struct EGB_PagePointerSet *ptrSet,s
 			break;
 		case 16:
 			{
-				unsigned short col=work->color[EGB_FOREGROUND_COLOR];
-
 				for(;;)
 				{
 					switch(work->drawingMode)
 					{
+					case EGB_FUNC_PRESET:
 					case EGB_FUNC_PSET:
 					case EGB_FUNC_OPAQUE:
 					case EGB_FUNC_MATTE:
-						*((_Far unsigned short *)(VRAM+vramAddr))=col;
+						*((_Far unsigned short *)(VRAM+vramAddr))=color;
 						break;
 					default:
-						TSUGARU_BREAK;
+						TSUGARU_BREAK(__LINE__);
 						break;
 					}
 
@@ -720,7 +820,7 @@ void EGB_DrawLineStipple(_Far struct EGB_Work *work,struct EGB_PagePointerSet *p
 				vramAddr+=ptrSet->mode->bytesPerLine;
 				break;
 			default:
-				TSUGARU_BREAK;
+				TSUGARU_BREAK(__LINE__);
 				_PUSH_DS
 				_POP_DS
 				break;
@@ -739,7 +839,7 @@ void EGB_DrawLineStipple(_Far struct EGB_Work *work,struct EGB_PagePointerSet *p
 				}
 				break;
 			default:
-				TSUGARU_BREAK;
+				TSUGARU_BREAK(__LINE__);
 				_PUSH_GS
 				_POP_GS
 				break;
@@ -758,14 +858,14 @@ void EGB_DrawLineStipple(_Far struct EGB_Work *work,struct EGB_PagePointerSet *p
 				}
 				break;
 			default:
-				TSUGARU_BREAK;
+				TSUGARU_BREAK(__LINE__);
 				_PUSH_FS
 				_POP_FS
 				break;
 			}
 			break;
 		default:
-			TSUGARU_BREAK;
+			TSUGARU_BREAK(__LINE__);
 			_PUSHFD
 			_POPFD
 			break;
@@ -860,7 +960,7 @@ void EGB_DrawLineStipple(_Far struct EGB_Work *work,struct EGB_PagePointerSet *p
 				}
 				break;
 			default:
-				TSUGARU_BREAK;
+				TSUGARU_BREAK(__LINE__);
 				break;
 			}
 			break;
@@ -881,7 +981,7 @@ void EGB_DrawLineStipple(_Far struct EGB_Work *work,struct EGB_PagePointerSet *p
 				}
 				break;
 			default:
-				TSUGARU_BREAK;
+				TSUGARU_BREAK(__LINE__);
 				break;
 			}
 			break;
@@ -903,7 +1003,7 @@ void EGB_DrawLineStipple(_Far struct EGB_Work *work,struct EGB_PagePointerSet *p
 				}
 				break;
 			default:
-				TSUGARU_BREAK;
+				TSUGARU_BREAK(__LINE__);
 				break;
 			}
 			break;
@@ -949,7 +1049,7 @@ void EGB_DrawLineStipple(_Far struct EGB_Work *work,struct EGB_PagePointerSet *p
 		switch(ptrSet->mode->bitsPerPixel)
 		{
 		case 1:
-			TSUGARU_BREAK;
+			TSUGARU_BREAK(__LINE__);
 			break;
 		case 4:
 			{
@@ -981,7 +1081,7 @@ void EGB_DrawLineStipple(_Far struct EGB_Work *work,struct EGB_PagePointerSet *p
 						EGB_DO_STIPPLE(stipple,{VRAM[vramAddr]^=ORPtn;});
 						break;
 					default:
-						TSUGARU_BREAK;
+						TSUGARU_BREAK(__LINE__);
 						break;
 					}
 
@@ -1026,7 +1126,7 @@ void EGB_DrawLineStipple(_Far struct EGB_Work *work,struct EGB_PagePointerSet *p
 						EGB_DO_STIPPLE(stipple,{VRAM[vramAddr]=col;});
 						break;
 					default:
-						TSUGARU_BREAK;
+						TSUGARU_BREAK(__LINE__);
 						break;
 					}
 
@@ -1061,7 +1161,7 @@ void EGB_DrawLineStipple(_Far struct EGB_Work *work,struct EGB_PagePointerSet *p
 						EGB_DO_STIPPLE(stipple,{*((_Far unsigned short *)(VRAM+vramAddr))=col;});
 						break;
 					default:
-						TSUGARU_BREAK;
+						TSUGARU_BREAK(__LINE__);
 						break;
 					}
 
@@ -1095,7 +1195,7 @@ void EGB_DrawLineStipple(_Far struct EGB_Work *work,struct EGB_PagePointerSet *p
 		switch(ptrSet->mode->bitsPerPixel)
 		{
 		case 1:
-			TSUGARU_BREAK;
+			TSUGARU_BREAK(__LINE__);
 			break;
 		case 4:
 			{
@@ -1124,7 +1224,7 @@ void EGB_DrawLineStipple(_Far struct EGB_Work *work,struct EGB_PagePointerSet *p
 							 VRAM[vramAddr]|=ORPtn;});
 						break;
 					default:
-						TSUGARU_BREAK;
+						TSUGARU_BREAK(__LINE__);
 						break;
 					}
 
@@ -1169,7 +1269,7 @@ void EGB_DrawLineStipple(_Far struct EGB_Work *work,struct EGB_PagePointerSet *p
 						EGB_DO_STIPPLE(stipple,{VRAM[vramAddr]=col;});
 						break;
 					default:
-						TSUGARU_BREAK;
+						TSUGARU_BREAK(__LINE__);
 						break;
 					}
 
@@ -1204,7 +1304,7 @@ void EGB_DrawLineStipple(_Far struct EGB_Work *work,struct EGB_PagePointerSet *p
 						EGB_DO_STIPPLE(stipple,{*((_Far unsigned short *)(VRAM+vramAddr))=col;});
 						break;
 					default:
-						TSUGARU_BREAK;
+						TSUGARU_BREAK(__LINE__);
 						break;
 					}
 

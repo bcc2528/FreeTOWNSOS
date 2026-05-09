@@ -6,6 +6,8 @@
 #include "IODEF.H"
 #include "UTIL.H"
 
+#include "PAD6.H"
+
 // What about SND_END?
 
 // "To make it compatible with MSX game pads, COM out must be zero."
@@ -34,6 +36,14 @@
 static unsigned int GetPitchBendScale(unsigned int pitch);
 static unsigned short GetFNUM_BLOCK_from_Number(unsigned char num);
 static unsigned int GetFreqScale(unsigned int note,unsigned int baseNote);
+
+static unsigned char defaultFMInst[48]=
+{
+0x45,0x2E,0x50,0x49,0x41,0x4E,0x4F,0x00, // "E.PIANO"
+0x01,0x00,0x01,0x01,0x7F,0x10,0x7F,0x00,0x1F,0x1F,0x1F,0x1F,0x00,0x00,0x00,0x04,
+0x00,0x00,0x00,0x00,0x0F,0x00,0x0F,0x66,0x04,0xC0,0x00,0x00,0x00,0x00,0x00,0x00,
+0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+};
 
 void YM2612_Write(unsigned char regSet,unsigned char reg,unsigned char value)
 {
@@ -173,6 +183,25 @@ unsigned char SND_ReadFromWaveRAM(unsigned short addr)
 	return *ptr;
 }
 
+static void SND_Change_FMInst(_Far struct SND_Status *stat,int ch,int instIndex)
+{
+	unsigned int regSet=ch/3;
+	unsigned int chMOD3=ch%3;
+	stat->FMCh[ch].instrument=instIndex;
+
+	for(int i=0; i<4; ++i)
+	{
+		YM2612_Write(regSet,0x30+chMOD3+i*4,stat->FMInst[instIndex].DT_MULTI[i]);
+		YM2612_Write(regSet,0x40+chMOD3+i*4,stat->FMInst[instIndex].TL[i]);
+		YM2612_Write(regSet,0x50+chMOD3+i*4,stat->FMInst[instIndex].KS_AR[i]);
+		YM2612_Write(regSet,0x60+chMOD3+i*4,stat->FMInst[instIndex].AMON_DR[i]);
+		YM2612_Write(regSet,0x70+chMOD3+i*4,stat->FMInst[instIndex].SR[i]);
+		YM2612_Write(regSet,0x80+chMOD3+i*4,stat->FMInst[instIndex].SL_RR[i]);
+	}
+	YM2612_Write(regSet,0xB0+chMOD3,stat->FMInst[instIndex].FB_CNCT);
+	YM2612_Write(regSet,0xB4+chMOD3,stat->FMInst[instIndex].LR_AMS_PMS|stat->FMCh[ch].pan);
+}
+
 void SND_INIT(
 	unsigned int EDI,
 	unsigned int ESI,
@@ -217,10 +246,20 @@ void SND_INIT(
 	_outb(TOWNSIO_ELEVOL_2_COM,3);
 
 
+	// FM Instruments
+	_Far struct FMB_INSTRUMENT *FMInst;
+	_FP_SEG(FMInst)=SEG_TGBIOS_CODE;
+	_FP_OFF(FMInst)=(unsigned int)defaultFMInst;
+	for(i=0; i<FM_NUM_INSTRUMENTS; ++i)
+	{
+		status->FMInst[i]=*FMInst;
+	}
+
+
 	// FM Channels
 	for(i=0; i<SND_NUM_FM_CHANNELS; ++i)
 	{
-		status->FMCh[i].instrument=0;
+		SND_Change_FMInst(status,i,0);
 		status->FMCh[i].vol=127; // FM TOWNS Technical Databook p.415 tells the default volume is 127.
 		status->FMCh[i].vol_key=0;
 		status->FMCh[i].pan=0xc0;
@@ -510,7 +549,7 @@ void SND_KEY_ON(
 	}
 	else
 	{
-		TSUGARU_BREAK;
+		TSUGARU_BREAK(__LINE__);;
 	}
 
 	// Error code  AL=SND_NO_ERROR or SND_ERROR_WRONG_CH or SND_ERROR_KEY_ALREADY_ON or SND_ERROR_PARAMETER.
@@ -571,7 +610,7 @@ void SND_KEY_OFF(
 	}
 	else
 	{
-		TSUGARU_BREAK;
+		TSUGARU_BREAK(__LINE__);;
 	}
 	SND_SetError(EAX,SND_NO_ERROR);
 }
@@ -632,7 +671,7 @@ void SND_PAN_SET(
 	else
 	{
 		SND_SetError(EAX,SND_ERROR_WRONG_CH);
-		TSUGARU_BREAK;
+		TSUGARU_BREAK(__LINE__);;
 	}
 }
 
@@ -661,21 +700,7 @@ void SND_INST_CHANGE(
 	{
 		if(instIndex<FM_NUM_INSTRUMENTS)
 		{
-			unsigned int regSet=ch/3;
-			unsigned int chMOD3=ch%3;
-			stat->FMCh[ch].instrument=instIndex;
-
-			for(int i=0; i<4; ++i)
-			{
-				YM2612_Write(regSet,0x30+chMOD3+i*4,stat->FMInst[instIndex].DT_MULTI[i]);
-				YM2612_Write(regSet,0x40+chMOD3+i*4,stat->FMInst[instIndex].TL[i]);
-				YM2612_Write(regSet,0x50+chMOD3+i*4,stat->FMInst[instIndex].KS_AR[i]);
-				YM2612_Write(regSet,0x60+chMOD3+i*4,stat->FMInst[instIndex].AMON_DR[i]);
-				YM2612_Write(regSet,0x70+chMOD3+i*4,stat->FMInst[instIndex].SR[i]);
-				YM2612_Write(regSet,0x80+chMOD3+i*4,stat->FMInst[instIndex].SL_RR[i]);
-			}
-			YM2612_Write(regSet,0xB0+chMOD3,stat->FMInst[instIndex].FB_CNCT);
-			YM2612_Write(regSet,0xB4+chMOD3,stat->FMInst[instIndex].LR_AMS_PMS|stat->FMCh[ch].pan);
+			SND_Change_FMInst(stat,ch,instIndex);
 		}
 		else
 		{
@@ -697,7 +722,7 @@ void SND_INST_CHANGE(
 	else
 	{
 		// MIDI support is long way ahead.
-		TSUGARU_BREAK;
+		TSUGARU_BREAK(__LINE__);;
 	}
 }
 
@@ -771,12 +796,46 @@ void SND_INST_READ(
 	unsigned int GS,
 	unsigned int FS)
 {
-	_Far struct SND_Work *work;
-	_FP_SEG(work)=GS;
-	_FP_OFF(work)=EDI;
+	// Input
+	//   BL=Channel
+	//   DH=Instrument Index (0 to 127)
+	//   DS:ESI=Instrument Data
+	unsigned char ch=(unsigned char)EBX;
+	unsigned char instIndex=(unsigned char)(EDX>>8);
+	_Far struct SND_Status *stat=SND_GetStatus();
 
-	SND_SetError(EAX,SND_NO_ERROR);
-		TSUGARU_BREAK;
+	if(SND_Is_FM_Channel(ch))
+	{
+		// YM2612
+		_Far struct FMB_INSTRUMENT *dst;
+		if(FM_NUM_INSTRUMENTS<=instIndex)
+		{
+			SND_SetError(EAX,SND_ERROR_PARAMETER);
+			return;
+		}
+		_FP_SEG(dst)=DS;
+		_FP_OFF(dst)=ESI;
+		MEMCPY_FAR(dst,&stat->FMInst[instIndex],sizeof(struct FMB_INSTRUMENT));
+		SND_SetError(EAX,SND_NO_ERROR);
+	}
+	else if(SND_Is_PCM_Channel(ch))
+	{
+		// RF5C68
+		_Far struct PMB_INSTRUMENT *dst;
+		if(PCM_NUM_INSTRUMENTS<=instIndex)
+		{
+			SND_SetError(EAX,SND_ERROR_PARAMETER);
+			return;
+		}
+		_FP_SEG(dst)=DS;
+		_FP_OFF(dst)=ESI;
+		MEMCPY_FAR(dst,&stat->PCMInst[instIndex],sizeof(struct PMB_INSTRUMENT));
+		SND_SetError(EAX,SND_NO_ERROR);
+	}
+	else
+	{
+		SND_SetError(EAX,SND_ERROR_WRONG_CH);
+	}
 }
 
 void SND_PITCH_CHANGE(
@@ -933,7 +992,7 @@ void SND_VOLUME_CHANGE(
 	else
 	{
 		SND_SetError(EAX,SND_ERROR_WRONG_CH);
-		// TSUGARU_BREAK; VSGP wants to change channel 3CH.
+		// TSUGARU_BREAK(__LINE__);; VSGP wants to change channel 3CH.
 	}
 }
 
@@ -975,15 +1034,24 @@ void SND_KEY_ABORT(
 	}
 	else if(SND_Is_PCM_Channel(ch))
 	{
+		unsigned char keyFlag;
+
 		ch-=SND_PCM_CHANNEL_START;
-		_outb(TOWNSIO_SOUND_PCM_CTRL,0xC0|ch); // Select PCM Channel
-		_outb(TOWNSIO_SOUND_PCM_ENV,0);
+
+		// 2026/02/22 ? Why was I doing it?
+		//_outb(TOWNSIO_SOUND_PCM_CTRL,0xC0|ch); // Select PCM Channel
+		//_outb(TOWNSIO_SOUND_PCM_ENV,0);
+
+		keyFlag=(1<<ch);
+		status->PCMKey|=keyFlag;
+		_outb(TOWNSIO_SOUND_PCM_CH_ON_OFF,status->PCMKey);  // 4F8
+
 		SND_SetError(EAX,SND_NO_ERROR);
 	}
 	else
 	{
 		SND_SetError(EAX,SND_ERROR_WRONG_CH);
-		TSUGARU_BREAK;
+		TSUGARU_BREAK(__LINE__);;
 	}
 
 	SND_SetError(EAX,SND_NO_ERROR);
@@ -1008,7 +1076,7 @@ void SND_STATUS(
 	_FP_OFF(work)=EDI;
 
 	SND_SetError(EAX,SND_NO_ERROR);
-		TSUGARU_BREAK;
+		TSUGARU_BREAK(__LINE__);;
 }
 
 void SND_10H_FM_READ_STATUS(
@@ -1069,7 +1137,7 @@ void SND_12H_FM_READ_DATA(
 	_FP_OFF(work)=EDI;
 
 	SND_SetError(EAX,SND_NO_ERROR);
-		TSUGARU_BREAK;
+		TSUGARU_BREAK(__LINE__);;
 }
 
 void SND_13H_FM_WRITE_SAVE_ATA(
@@ -1091,7 +1159,7 @@ void SND_13H_FM_WRITE_SAVE_ATA(
 	_FP_OFF(work)=EDI;
 
 	SND_SetError(EAX,SND_NO_ERROR);
-		TSUGARU_BREAK;
+		TSUGARU_BREAK(__LINE__);;
 }
 
 void SND_14H_FM_READ_SAVE_DATA(
@@ -1113,7 +1181,7 @@ void SND_14H_FM_READ_SAVE_DATA(
 	_FP_OFF(work)=EDI;
 
 	SND_SetError(EAX,SND_NO_ERROR);
-		TSUGARU_BREAK;
+		TSUGARU_BREAK(__LINE__);;
 }
 
 void SND_15H_FM_TIMER_A_SET(
@@ -1502,7 +1570,7 @@ void SND_23H_PCM_SOUND_DELETE(
 	}
 	else
 	{
-		TSUGARU_BREAK;
+		TSUGARU_BREAK(__LINE__);;
 	}
 	SND_SetError(EAX,SND_NO_ERROR);
 }
@@ -1526,7 +1594,7 @@ void SND_24H_PCM_REC_START(
 	_FP_OFF(work)=EDI;
 
 	SND_SetError(EAX,SND_NO_ERROR);
-		TSUGARU_BREAK;
+		TSUGARU_BREAK(__LINE__);;
 }
 
 void SND_26H_PCM_REC_STOP(
@@ -1548,7 +1616,7 @@ void SND_26H_PCM_REC_STOP(
 	_FP_OFF(work)=EDI;
 
 	SND_SetError(EAX,SND_NO_ERROR);
-		TSUGARU_BREAK;
+		TSUGARU_BREAK(__LINE__);;
 }
 
 void SND_27H_PCM_PCM_VOICE_STOP(
@@ -1725,7 +1793,7 @@ void SND_2BH_PCM_PCMRAM_TO_PCMRAM(
 	_FP_OFF(work)=EDI;
 
 	SND_SetError(EAX,SND_NO_ERROR);
-		TSUGARU_BREAK;
+		TSUGARU_BREAK(__LINE__);;
 }
 
 void SND_2CH_PCM_TRANSFER2(
@@ -2058,7 +2126,7 @@ void SND_FM_REGWRITE(
 	_FP_OFF(work)=EDI;
 
 	SND_SetError(EAX,SND_NO_ERROR);
-		TSUGARU_BREAK;
+		TSUGARU_BREAK(__LINE__);;
 }
 
 void SND_JOY_IN(
@@ -2109,46 +2177,64 @@ void SND_JOY_IN_2(
 	unsigned int FS)
 {
 	unsigned char port=(EDX>>8)&1,pad;
-	_Far struct SND_Work *work;
-	_FP_SEG(work)=GS;
-	_FP_OFF(work)=EDI;
+	_Far struct SND_Global_Settings *global=SND_GetGlobalSettings();
 
-	_outb(TOWNSIO_GAMEPORT_OUTPUT,PAD_OUT_CONST);
-	_outb(TOWNSIO_TIMER_1US_WAIT,0);
-	if(0==port)
+	switch(global->gameDevTypes[port])
 	{
-		pad=_inb(TOWNSIO_GAMEPORT_A_INPUT);
-	}
-	else
-	{
-		pad=_inb(TOWNSIO_GAMEPORT_B_INPUT);
-	}
+	default:
+	case SND_GAMEDEV_TYPE_NORMAL:
+		_outb(TOWNSIO_GAMEPORT_OUTPUT,PAD_OUT_CONST);
+		_outb(TOWNSIO_TIMER_1US_WAIT,0);
+		if(0==port)
+		{
+			pad=_inb(TOWNSIO_GAMEPORT_A_INPUT);
+		}
+		else
+		{
+			pad=_inb(TOWNSIO_GAMEPORT_B_INPUT);
+		}
 
-	pad|=0xC0;
-	// if(0==(pad&(PAD_LEFT|PAD_RIGHT)) && (PAD_UP|PAD_DOWN)==(pad&(PAD_UP|PAD_DOWN)))
-	// The second condition is based on the observation of the original TBIOS.
-	if((PAD_UP|PAD_DOWN)==(pad&0x0F)) //The above condition is same as this.
-	{
-		pad&=(~PAD_RUN);
-	}
-	// if(0==(pad&(PAD_UP|PAD_DOWN)) && (PAD_LEFT|PAD_RIGHT)==(pad&(PAD_LEFT|PAD_RIGHT)))
-	// The second condition is based on the observation of the original TBIOS.
-	if((PAD_LEFT|PAD_RIGHT)==(pad&0x0F)) // The above condition is same as this.
-	{ 
-		pad&=(~PAD_SELECT);
-	}
-	// Looks like if both UP&DOWN (or LEFT&RIGHT) are both pressed, if LEFT&RIGHT (or UP&DOWN) are both released,
-	// it won't take Run/Select button.
+		pad|=0xC0;
+		// if(0==(pad&(PAD_LEFT|PAD_RIGHT)) && (PAD_UP|PAD_DOWN)==(pad&(PAD_UP|PAD_DOWN)))
+		// The second condition is based on the observation of the original TBIOS.
+		if((PAD_UP|PAD_DOWN)==(pad&0x0F)) //The above condition is same as this.
+		{
+			pad&=(~PAD_RUN);
+		}
+		// if(0==(pad&(PAD_UP|PAD_DOWN)) && (PAD_LEFT|PAD_RIGHT)==(pad&(PAD_LEFT|PAD_RIGHT)))
+		// The second condition is based on the observation of the original TBIOS.
+		if((PAD_LEFT|PAD_RIGHT)==(pad&0x0F)) // The above condition is same as this.
+		{ 
+			pad&=(~PAD_SELECT);
+		}
+		// Looks like if both UP&DOWN (or LEFT&RIGHT) are both pressed, if LEFT&RIGHT (or UP&DOWN) are both released,
+		// it won't take Run/Select button.
 
-	// The following must be done independently.
-	// If I/O read is 030H (possible from mouse), the return should be FFh.
-	if(0==((PAD_UP|PAD_DOWN)&pad))
-	{
-		pad|=(PAD_UP|PAD_DOWN);
-	}
-	if(0==((PAD_LEFT|PAD_RIGHT)&pad))
-	{
-		pad|=(PAD_LEFT|PAD_RIGHT);
+		// The following must be done independently.
+		// If I/O read is 030H (possible from mouse), the return should be FFh.
+		if(0==((PAD_UP|PAD_DOWN)&pad))
+		{
+			pad|=(PAD_UP|PAD_DOWN);
+		}
+		if(0==((PAD_LEFT|PAD_RIGHT)&pad))
+		{
+			pad|=(PAD_LEFT|PAD_RIGHT);
+		}
+		break;
+	case SND_GAMEDEV_TYPE_6BTN:
+		{
+			unsigned int in=PAD6_in(port);
+			pad=in;
+			if(0==(in&0x200)) // Y button
+			{
+				pad&=~PAD_RUN;
+			}
+			if(0==(in&0x100)) // Z button
+			{
+				pad&=~PAD_SELECT;
+			}
+		}
+		break;
 	}
 
 
@@ -2176,7 +2262,7 @@ void SND_JOY_OUT(
 	_FP_OFF(work)=EDI;
 
 	SND_SetError(EAX,SND_NO_ERROR);
-		TSUGARU_BREAK;
+		TSUGARU_BREAK(__LINE__);;
 }
 
 void SND_43H_ELEVOL_SET(
@@ -2411,7 +2497,7 @@ void SND_49H_ELEVOL_ALL_MUTE(
 	_FP_OFF(work)=EDI;
 
 	SND_SetError(EAX,SND_NO_ERROR);
-		TSUGARU_BREAK;
+		TSUGARU_BREAK(__LINE__);;
 }
 
 void SND_4AH_UNPUBLISHED_FUNCTION(
@@ -2670,8 +2756,36 @@ void SND_NOP(
 	unsigned int FS)
 {
 	// Not supposed to be called.
-		TSUGARU_BREAK;
+		TSUGARU_BREAK(__LINE__);;
 }
+
+// AH=E0H
+// DH=Port Number 0 or 1
+// DL=Device Type
+void SND_E0H_SETGLOBAL_GAMEDEV(
+	unsigned int EDI,
+	unsigned int ESI,
+	unsigned int EBP,
+	unsigned int ESP,
+	unsigned int EBX,
+	unsigned int EDX,
+	unsigned int ECX,
+	unsigned int EAX,
+	unsigned int DS,
+	unsigned int ES,
+	unsigned int GS,
+	unsigned int FS)
+{
+	unsigned char DH=EDX>>8;
+	unsigned char DL=EDX;
+	if(0==DH || 1==DH)
+	{
+		_Far struct SND_Global_Settings *global=SND_GetGlobalSettings();
+		global->gameDevTypes[DH]=DL;
+	}
+	SND_SetError(EAX,SND_NO_ERROR);
+}
+
 
 static struct SND_Status status=
 {
@@ -2692,6 +2806,19 @@ _Far struct SND_Status *SND_GetStatus(void)
 	_Far struct SND_Status *ptr;
 	_FP_SEG(ptr)=SEG_TGBIOS_DATA;
 	_FP_OFF(ptr)=(unsigned int)&status;
+	return ptr;
+}
+
+static struct SND_Global_Settings global=
+{
+	{SND_GAMEDEV_TYPE_NORMAL,SND_GAMEDEV_TYPE_NORMAL},  // unsigned char gameDevTypes[2];
+};
+
+_Far struct SND_Global_Settings *SND_GetGlobalSettings(void)
+{
+	_Far struct SND_Global_Settings *ptr;
+	_FP_SEG(ptr)=SEG_TGBIOS_DATA;
+	_FP_OFF(ptr)=(unsigned int)&global;
 	return ptr;
 }
 

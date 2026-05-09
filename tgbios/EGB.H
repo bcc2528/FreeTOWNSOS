@@ -102,6 +102,12 @@ struct POINTUW
 	unsigned short x,y;
 };
 
+struct EGB_Polygon
+{
+	unsigned short nVtx;
+	struct POINTW vtx[1];
+};
+
 #define SCRNMODE_FLAG_VSCROLL	1
 #define SCRNMODE_FLAG_HSCROLL	2
 #define SCRNMODE_FLAG_STARTPOS  4
@@ -116,6 +122,8 @@ struct POINTUW
 #define IS_SJIS_FIRST_BYTE(ch) ((0x81<=(unsigned char)(ch) && (unsigned char)(ch)<0xA0)||(0xE0<=(unsigned char)(ch) && (unsigned char)(ch)<0xFD))
 
 #define BoxIsOutsideOfViewport(xMin,yMin,xMax,yMax,page) ((xMax)<(page)->viewport[0].x || (page)->viewport[1].x<(xMin) || (yMax)<(page)->viewport[0].y || (page)->viewport[1].y<(yMin))
+
+#define YIsOutsideOfViewport(y,page) ((y)<(page)->viewport[0].y || (page)->viewport[1].y<(y))
 
 #define EGB_CalcVRAMAddr(vramAddr,x,y,mode) \
 	if(0!=(mode)->bytesPerLineShift) \
@@ -178,6 +186,14 @@ struct EGB_PerPage
 #define EGB_HATCH_MAXWID 32
 #define EGB_HATCH_MAXHEI 32
 
+#define EGB_POLYGONBUF_HEIGHT 512
+#define EGB_POLYGONBUF_MAX_INTERSECTIONS 8
+
+struct EGB_PolygonBufLine
+{
+	short x[EGB_POLYGONBUF_MAX_INTERSECTIONS];
+};
+
 struct EGB_HatchingPattern
 {
 	struct POINTUW size;  // size.x is as specified in AH=0D. i.e., bytes per line.
@@ -226,6 +242,8 @@ struct EGB_Work
 
 	struct EGB_ScreenMode virtualPage[4];
 	struct EGB_PerPage perVirtualPage[4];
+
+	struct EGB_PolygonBufLine polygonBuf[EGB_POLYGONBUF_HEIGHT];
 };
 
 struct EGB_PagePointerSet
